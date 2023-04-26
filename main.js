@@ -1,3 +1,5 @@
+const ONE_MB = 1024 * 1024;
+
 class Miner {
   constructor(blockData, target, prevBlockHash) {
     this.blockData = blockData;
@@ -38,34 +40,29 @@ class Miner {
     const blockHex = hex.slice(0, 128);
     const blockData = hexToUint32Array(blockHex);
 
-      // We need to ensure that the blockData is always 1MB in size
-      // If the blockData is already 1MB, we can use it as is
-      // If it is smaller, we need to pad it with zeros until it is 1MB
-      // If it is larger, we need to truncate it to 1MB
+    // We need to ensure that the blockData is always 1MB in size
+    // If the blockData is already 1MB, we can use it as is
+    // If it is smaller, we need to pad it with zeros until it is 1MB
+    // If it is larger, we need to truncate it to 1MB
 
-      const ONE_MB = 1024 * 1024;
-      const blockDataSize = this.blockData.byteLength;
+    const blockDataSize = this.blockData.byteLength;
 
-      if (blockDataSize < ONE_MB) {
+    if (blockDataSize < ONE_MB) {
       // Pad with zeros
       const paddedBlockData = new Uint8Array(ONE_MB);
       paddedBlockData.set(new Uint8Array(this.blockData.buffer), 0);
       this.blockData = paddedBlockData.buffer;
-      } else if (blockDataSize > ONE_MB) {
+    } else if (blockDataSize > ONE_MB) {
       // Truncate to 1MB
       this.blockData = this.blockData.slice(0, ONE_MB);
-      } else {
-      // Already 1MB, nothing to do
-      }
-
+    }
 
     // Example loading a buffer.
-    const exampleValue = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8]);
-    const exampleBuffer = this.createBuffer(this.device, this.bufferSize(exampleValue.length), GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
-    this.device.queue.writeBuffer(exampleBuffer, 0, exampleValue);
+    const hexBuffer = this.createBuffer(this.device, this.bufferSize(ONE_MB / 4), GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
+    this.device.queue.writeBuffer(hexBuffer, 0, blockData);
 
-    console.log("Finished loading miner.");
-    return null;
+    console.log("Finished loading block.");
+    return hexBuffer;
   }
 
   async run() {
@@ -202,7 +199,7 @@ const sha256Shader = () => `
       return (e & f) ^ ((~e) & g);
   }
 
-  const megabyte: u32 = 1000000;
+  const megabyte: u32 = 1048576;
   cosnst num_chunks: u32 = 15625; // 1 megabyte / 512 bits
 
   struct Uniforms {
@@ -305,3 +302,4 @@ const sha256Shader = () => `
       hashes[hash_base_index + 6] = swap_endianess32(hashes[hash_base_index + 6]);
       hashes[hash_base_index + 7] = swap_endianess32(hashes[hash_base_index + 7]);
 
+`;
