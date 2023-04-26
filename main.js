@@ -215,7 +215,7 @@ const sha256Shader = () => `
   struct Uniforms {
       numThreads: u32,
       nonceOffset: u32,
-  }
+  };
 
   @group(1) @binding(0) var<storage, read> blockData: array<u32>;
   @group(0) @binding(0) var<uniform> params: Uniforms;
@@ -223,25 +223,14 @@ const sha256Shader = () => `
 
   @compute @workgroup_size(64)
   fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-      let numThreads: u32 = Uniforms.numThreads;
-
+      let numThreads: u32 = params.numThreads;
       let index = global_id.x;
+
       if (index >= numThreads) {
           return;
       }
-      let message_base_index = index * message_sizes[1];
-      let hash_base_index = index * (256u / 32u);
 
-      // == padding == //
-
-      messages[message_base_index + message_sizes[0]] = 0x00000080u;
-      for (var i = message_sizes[0] + 1; i < message_sizes[1] - 2; i++){
-          messages[message_base_index + i] = 0x00000000u;
-      }
-      messages[message_base_index + message_sizes[1] - 2] = 0;
-      messages[message_base_index + message_sizes[1] - 1] = swap_endianess32(message_sizes[0] * 32u);
-
-      // == processing == //
+      let hash_base_index = index * 8u;
 
       hashes[hash_base_index] = 0x6a09e667u;
       hashes[hash_base_index + 1] = 0xbb67ae85u;
@@ -263,12 +252,11 @@ const sha256Shader = () => `
           0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u, 0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u
       );
 
-      let num_chunks = (message_sizes[1] * 32u) / 512u;
       for (var i = 0u; i < num_chunks; i++){
-          let chunk_index = i * (512u/32u);
+          let chunk_index = i * 16u;
           var w = array<u32,64>();
           for (var j = 0u; j < 16u; j++){
-              w[j] = swap_endianess32(messages[message_base_index + chunk_index + j]);
+              w[j] = swap_endianess32(blockData[chunk_index + j]);
           }
           for (var j = 16u; j < 64u; j++){
               w[j] = w[j - 16u] + g0(w[j - 15u]) + w[j - 7u] + g1(w[j - 2u]);
