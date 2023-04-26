@@ -51,7 +51,7 @@ class Miner {
       throw new Error("Block data exceeds size");
     }
 
-    this.hexBuffer = this.createBuffer(bufferSize(ONE_MB / 4), GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
+    this.hexBuffer = this.createBuffer(ONE_MB, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     this.device.queue.writeBuffer(this.hexBuffer, 0, this.blockData);
 
     console.log("Finished loading block.");
@@ -62,14 +62,14 @@ class Miner {
 
     const commandEncoder = this.device.createCommandEncoder();
 
-    const numThreads = 64;
+    const numThreads = 1;
     const nonceOffset = 0;
     const workgroup_X = 64;
 
     const UniformBuffer = this.createBuffer(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    this.device.queue.writeBuffer(UniformBuffer, 0, new Uint32Array([numThreads, nonceOffset]));
-    const ResultBuffer = this.createBuffer(bufferSize(64), GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC); // 64 * 4 bytes from 32 bit int
+    const ResultBuffer = this.createBuffer(numThreads * 32, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC); // 256 bit output or 32 bytes
     const BindGroup = this.createBindGroup(this.u_s_BindLayout, [UniformBuffer, ResultBuffer]);
+    this.device.queue.writeBuffer(UniformBuffer, 0, new Uint32Array([numThreads, nonceOffset]));
 
     const PassEncoder = commandEncoder.beginComputePass();
     PassEncoder.setPipeline(this.sha256Pipeline);
@@ -80,10 +80,12 @@ class Miner {
 
     this.device.queue.submit([commandEncoder.finish()]);
 
-    await ResultBuffer.mapAsync(GPUMapMode.READ);
-    const output = ResultBuffer.getMappedRange();
+    const resultOutputBuffer = this.createOutputBuffer(commandEncoder, ResultBuffer, numThreads, 8);
 
-    return new Float32Array(output);
+    await resultOutputBuffer.mapAsync(GPUMapMode.READ);
+    const output = resultOutputBuffer.getMappedRange();
+
+    return new Uint32Array(output);
   }
 
   initBindGroups() {
@@ -144,7 +146,7 @@ class Miner {
   }
 
   createOutputBuffer(commandEncoder, buffer, rows, cols) {
-    const outputBufferSize = bufferSize(rows, cols);
+    const outputBufferSize = rows * cols * Uint32Array.BYTES_PER_ELEMENT;
     const outputBuffer = this.createBuffer(outputBufferSize, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ);
     commandEncoder.copyBufferToBuffer(buffer, 0, outputBuffer, 0, outputBufferSize);
     return outputBuffer;
@@ -163,10 +165,6 @@ function hexToUint32Array(hexStr) {
   }
 
   return uint32Array;
-}
-
-function bufferSize(dimA, dimB = 1) {
-  return dimA * dimB * Float32Array.BYTES_PER_ELEMENT;
 }
 
 const workgroupCalc = (dim, size) => Math.min(Math.ceil(dim / size), 256);
