@@ -1,5 +1,8 @@
 class Miner {
-  constructor() {
+  constructor(blockData, target, prevBlockHash) {
+    this.blockData = blockData;
+    this.target = target;
+    this.prevBlockHash = prevBlockHash;
     this.initialized = false;
     this.device = null;
   }
@@ -65,8 +68,9 @@ class Miner {
   }
 
   initPipelines() {
-    this.sha256Pipeline = createPipeline(this.device, matMulShader, [this.u_s_BindLayout, this.r_BindLayout]);
+    this.sha256Pipeline = createPipeline(this.device, miningShader, [this.r_BindLayout]);
   }
+  
 }
 
 // Multiplies two matrices.
