@@ -19,6 +19,8 @@ class Miner {
     this.initBindGroups();
     this.initPipelines();
 
+    await this.loadBlock("000000006a625f06636b8bb6ac7b960a8d03705d1ace08b1a19da3fdcc99ddbd");
+
     this.initialized = true;
   }
 
@@ -61,8 +63,9 @@ class Miner {
     const hexBuffer = this.createBuffer(this.device, this.bufferSize(ONE_MB / 4), GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     this.device.queue.writeBuffer(hexBuffer, 0, blockData);
 
+    this.hexBuffer = hexBuffer;
+
     console.log("Finished loading block.");
-    return hexBuffer;
   }
 
   async run() {
@@ -80,7 +83,7 @@ class Miner {
     const PassEncoder = commandEncoder.beginComputePass();
     PassEncoder.setPipeline(this.sha256Pipeline);
     PassEncoder.setBindGroup(0, BindGroup);
-    PassEncoder.setBindGroup(1, this.createBindGroup(this.device, this.r_BindLayout, [hexBuffer]));
+    PassEncoder.setBindGroup(1, this.createBindGroup(this.device, this.r_BindLayout, [this.hexBuffer]));
     PassEncoder.dispatchWorkgroups(workgroupCalc(numThreads, workgroup_X));
     PassEncoder.end();
 
@@ -303,3 +306,9 @@ const sha256Shader = () => `
       hashes[hash_base_index + 7] = swap_endianess32(hashes[hash_base_index + 7]);
 
 `;
+
+(async () => {
+  const miner = new Miner();
+  await miner.initialize();
+  await miner.run();
+})();
