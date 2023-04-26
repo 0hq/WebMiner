@@ -66,11 +66,6 @@ class Miner {
   }
 
   initPipelines() {
-<<<<<<< HEAD
-    this.sha256Pipeline = createPipeline(this.device, miningShader, [this.r_BindLayout]);
-  }
-  
-=======
     this.sha256Pipeline = this.createPipeline(matMulShader, [this.u_s_BindLayout, this.r_BindLayout]);
   }
 
@@ -132,7 +127,6 @@ class Miner {
 
 function bufferSize(dimA, dimB = 1) {
   return dimA * dimB * Float32Array.BYTES_PER_ELEMENT;
->>>>>>> origin/master
 }
 
 // Multiplies two matrices.
