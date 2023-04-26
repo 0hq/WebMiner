@@ -34,56 +34,47 @@ class Miner {
     const blockJSON = await (await fetch(`https://api.blockchair.com/bitcoin/raw/block/${hash}`)).json();
     const hex = blockJSON.data[hash].raw_block;
 
-    const hexToUint32Array = (hex) => {
-      const hexArray = hex.match(/.{1,8}/g);
-      const resultArray = hexArray.map((hex) => parseInt(hex, 16));
-      return new Uint32Array(resultArray);
-    };
-    const blockHex = hex.slice(0, 128);
-    const blockData = hexToUint32Array(blockHex);
-
     // We need to ensure that the blockData is always 1MB in size
     // If the blockData is already 1MB, we can use it as is
     // If it is smaller, we need to pad it with zeros until it is 1MB
     // If it is larger, we need to truncate it to 1MB
 
-    const blockDataSize = this.blockData.byteLength;
+    const numBytes = hex.length / 2;
+    this.blockData = hexToUint32Array(hex);
 
-    if (blockDataSize < ONE_MB) {
+    if (numBytes < ONE_MB) {
       // Pad with zeros
-      const paddedBlockData = new Uint8Array(ONE_MB);
+      const paddedBlockData = new Uint8Array(ONE_MB / 4);
       paddedBlockData.set(new Uint8Array(this.blockData.buffer), 0);
       this.blockData = paddedBlockData.buffer;
     } else if (blockDataSize > ONE_MB) {
-      // Truncate to 1MB
-      this.blockData = this.blockData.slice(0, ONE_MB);
+      throw new Error("Block data exceeds size");
     }
 
-    // Example loading a buffer.
-    const hexBuffer = this.createBuffer(this.device, this.bufferSize(ONE_MB / 4), GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
-    this.device.queue.writeBuffer(hexBuffer, 0, blockData);
-
-    this.hexBuffer = hexBuffer;
+    this.hexBuffer = this.createBuffer(bufferSize(ONE_MB / 4), GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
+    this.device.queue.writeBuffer(this.hexBuffer, 0, this.blockData);
 
     console.log("Finished loading block.");
   }
 
   async run() {
+    if (!this.initialized) return console.error("Run called before initialization.");
+
     const commandEncoder = this.device.createCommandEncoder();
 
     const numThreads = 64;
     const nonceOffset = 0;
     const workgroup_X = 64;
 
-    const UniformBuffer = this.createBuffer(this.device, 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    const UniformBuffer = this.createBuffer(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.device.queue.writeBuffer(UniformBuffer, 0, new Uint32Array([numThreads, nonceOffset]));
-    const ResultBuffer = this.createBuffer(this.device, this.bufferSize(64), GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC); // 64 * 4 bytes from 32 bit int
-    const BindGroup = this.createBindGroup(this.device, this.u_s_BindLayout, [UniformBuffer, ResultBuffer]);
+    const ResultBuffer = this.createBuffer(bufferSize(64), GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC); // 64 * 4 bytes from 32 bit int
+    const BindGroup = this.createBindGroup(this.u_s_BindLayout, [UniformBuffer, ResultBuffer]);
 
     const PassEncoder = commandEncoder.beginComputePass();
     PassEncoder.setPipeline(this.sha256Pipeline);
     PassEncoder.setBindGroup(0, BindGroup);
-    PassEncoder.setBindGroup(1, this.createBindGroup(this.device, this.r_BindLayout, [this.hexBuffer]));
+    PassEncoder.setBindGroup(1, this.createBindGroup(this.r_BindLayout, [this.hexBuffer]));
     PassEncoder.dispatchWorkgroups(workgroupCalc(numThreads, workgroup_X));
     PassEncoder.end();
 
@@ -160,9 +151,25 @@ class Miner {
   }
 }
 
+function hexToUint32Array(hexStr) {
+  const uint32ArrayLength = Math.ceil(hexStr.length / 8);
+  const uint32Array = new Uint32Array(uint32ArrayLength);
+
+  for (let i = 0; i < uint32ArrayLength; i++) {
+    const start = i * 8;
+    const end = start + 8;
+    const chunk = hexStr.slice(start, end);
+    uint32Array[i] = parseInt(chunk, 16);
+  }
+
+  return uint32Array;
+}
+
 function bufferSize(dimA, dimB = 1) {
   return dimA * dimB * Float32Array.BYTES_PER_ELEMENT;
 }
+
+const workgroupCalc = (dim, size) => Math.min(Math.ceil(dim / size), 256);
 
 // Referenced from https://github.com/MarcoCiaramella/sha256-gpu/blob/main/index.js
 const sha256Shader = () => `
@@ -203,11 +210,11 @@ const sha256Shader = () => `
   }
 
   const megabyte: u32 = 1048576;
-  cosnst num_chunks: u32 = 15625; // 1 megabyte / 512 bits
+  const num_chunks: u32 = 15625; // 1 megabyte / 512 bits
 
   struct Uniforms {
-      numThreads: u32;
-      nonceOffset: u32;
+      numThreads: u32,
+      nonceOffset: u32,
   }
 
   @group(1) @binding(0) var<storage, read> blockData: array<u32>;
@@ -217,7 +224,6 @@ const sha256Shader = () => `
   @compute @workgroup_size(64)
   fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
       let numThreads: u32 = Uniforms.numThreads;
-      let index = global_id.x;
 
       let index = global_id.x;
       if (index >= numThreads) {
@@ -304,11 +310,11 @@ const sha256Shader = () => `
       hashes[hash_base_index + 5] = swap_endianess32(hashes[hash_base_index + 5]);
       hashes[hash_base_index + 6] = swap_endianess32(hashes[hash_base_index + 6]);
       hashes[hash_base_index + 7] = swap_endianess32(hashes[hash_base_index + 7]);
-
+    }
 `;
 
 (async () => {
   const miner = new Miner();
   await miner.initialize();
-  await miner.run();
+  console.log("Result:", await miner.run());
 })();
