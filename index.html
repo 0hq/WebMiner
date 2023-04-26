@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>WebMiner Model Demo</title>
+    <script src="main.js"></script>
+  </head>
+  <body>
+    <h1>WebMiner Demo</h1>
+    <p id="webgpuSupportMessage">Checking WebGPU support...</p>
+    <br /><br />
+    <script>
+      const webgpuSupportMessage = document.getElementById("webgpuSupportMessage");
+
+      // Check for WebGPU support
+      if (!navigator.gpu) {
+        webgpuSupportMessage.innerHTML =
+          "WebGPU is not supported in your browser yet. Update Chrome to v113 or download Chrome Canary here: <a href='https://www.google.com/chrome/canary/'>https://www.google.com/chrome/canary/</a>";
+        console.error("WebGPU is not supported");
+      } else {
+        webgpuSupportMessage.innerHTML = "WebGPU is supported in your browser!";
+      }
+    </script>
+  </body>
+</html>
