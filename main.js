@@ -1,5 +1,3 @@
-const ONE_MB = 1024 * 1024;
-
 class Miner {
   constructor(blockData, target, prevBlockHash) {
     this.blockData = blockData;
@@ -27,6 +25,7 @@ class Miner {
     this.initialized = true;
   }
 
+  // This is all wrong (I need to sleep more), good reference: https://github.com/guerrerocarlos/bitcoin-miner/blob/master/index.js
   async loadBlock(hash) {
     if (this.initialized) {
       console.error("Miner already loaded");
@@ -37,7 +36,6 @@ class Miner {
     const blockJSON = await (await fetch(`https://api.blockchair.com/bitcoin/raw/block/${hash}`)).json();
     console.log("Block JSON: ", blockJSON);
     const hex = blockJSON.data[hash].raw_block;
-    console.log("Block hex: ", hex);
 
     const numBytes = hex.length / 2;
     this.blockData = hexToUint32Array(hex);
@@ -47,12 +45,17 @@ class Miner {
     console.log("Block size: ", hex.length, hex.length / 2);
 
     // We need to ensure that the blockData pads to 512 bits (64 bytes)
-    const paddedBlockData = new Uint8Array(Math.ceil(numBytes / 64) * 64);
-    paddedBlockData.set(new Uint8Array(this.blockData.buffer), 0);
+    const numChunks = Math.ceil(numBytes / 64) * 64;
+    const paddedBlockData = new Uint32Array(numChunks / 4); // bytes -> u32
+    paddedBlockData.set(new Uint32Array(this.blockData.buffer), 0);
     this.blockData = paddedBlockData.buffer;
 
-    this.hexBuffer = this.createBuffer(ONE_MB, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
+    console.log("Padded block data size: ", this.blockData.byteLength);
+
+    this.hexBuffer = this.createBuffer(numChunks, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     this.device.queue.writeBuffer(this.hexBuffer, 0, this.blockData);
+
+    console.log("expected hash", await hashHex(hex));
 
     console.log("Finished loading block.");
   }
@@ -60,17 +63,18 @@ class Miner {
   async run() {
     if (!this.initialized) return console.error("Run called before initialization.");
 
-    const commandEncoder = this.device.createCommandEncoder();
-
     const numThreads = 1;
     const nonceOffset = 0;
     const workgroup_X = 8;
     const outputBufferBytes = numThreads * 32;
+    const numChunks = Math.ceil(this.blockData.byteLength / 64);
+
+    const commandEncoder = this.device.createCommandEncoder();
 
     const UniformBuffer = this.createBuffer(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     const ResultBuffer = this.createBuffer(outputBufferBytes, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC); // 256 bit output or 32 bytes
     const BindGroup = this.createBindGroup(this.u_s_BindLayout, [UniformBuffer, ResultBuffer]);
-    this.device.queue.writeBuffer(UniformBuffer, 0, new Uint32Array([numThreads, nonceOffset]));
+    this.device.queue.writeBuffer(UniformBuffer, 0, new Uint32Array([numThreads, nonceOffset, numChunks]));
 
     const PassEncoder = commandEncoder.beginComputePass();
     PassEncoder.setPipeline(this.sha256Pipeline);
@@ -79,14 +83,14 @@ class Miner {
     PassEncoder.dispatchWorkgroups(workgroupCalc(numThreads, workgroup_X));
     PassEncoder.end();
 
-    this.device.queue.submit([commandEncoder.finish()]);
-
     const resultOutputBuffer = this.createOutputBuffer(commandEncoder, ResultBuffer, outputBufferBytes);
+
+    this.device.queue.submit([commandEncoder.finish()]);
 
     await resultOutputBuffer.mapAsync(GPUMapMode.READ);
     const output = resultOutputBuffer.getMappedRange();
 
-    return new Uint32Array(output);
+    return uint32ArrayToHex(new Uint32Array(output));
   }
 
   initBindGroups() {
@@ -95,7 +99,7 @@ class Miner {
   }
 
   initPipelines() {
-    this.sha256Pipeline = this.createPipeline(sha256Shader(), [this.u_s_BindLayout, this.r_BindLayout]);
+    this.sha256Pipeline = this.createPipeline(sha256Shader, [this.u_s_BindLayout, this.r_BindLayout]);
   }
 
   createBindGroupLayout(string_entries) {
@@ -154,23 +158,43 @@ class Miner {
 }
 
 function hexToUint32Array(hexStr) {
-  const uint32ArrayLength = Math.ceil(hexStr.length / 8);
-  const uint32Array = new Uint32Array(uint32ArrayLength);
+  const arrayLength = Math.ceil(hexStr.length / 8);
+  const array = new Uint32Array(arrayLength);
 
-  for (let i = 0; i < uint32ArrayLength; i++) {
+  for (let i = 0; i < arrayLength; i++) {
     const start = i * 8;
     const end = start + 8;
     const chunk = hexStr.slice(start, end);
-    uint32Array[i] = parseInt(chunk, 16);
+    array[i] = parseInt(chunk, 16);
   }
 
-  return uint32Array;
+  return array;
+}
+
+function uint32ArrayToHex(array) {
+  let hexStr = "";
+
+  for (let i = 0; i < array.length; i++) {
+    const chunk = array[i].toString(16).padStart(8, "0");
+    hexStr += chunk;
+  }
+
+  return hexStr;
 }
 
 const workgroupCalc = (dim, size) => Math.min(Math.ceil(dim / size), 256);
 
-// Referenced from https://github.com/MarcoCiaramella/sha256-gpu/blob/main/index.js
-const sha256Shader = () => `
+async function hashHex(hexString) {
+  const hexArray = hexString.match(/.{1,2}/g).map((byte) => parseInt(byte, 16));
+  const uint8Array = new Uint8Array(hexArray);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", uint8Array);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map((bytes) => bytes.toString(16).padStart(2, "0")).join("");
+  return hashHex;
+}
+
+// Some code referenced from https://github.com/MarcoCiaramella/sha256-gpu/blob/main/index.js
+const sha256Shader = `
   fn swap_endianess32(val: u32) -> u32 {
       return ((val>>24u) & 0xffu) | ((val>>8u) & 0xff00u) | ((val<<8u) & 0xff0000u) | ((val<<24u) & 0xff000000u);
   }
@@ -207,12 +231,11 @@ const sha256Shader = () => `
       return (e & f) ^ ((~e) & g);
   }
 
-  const megabyte: u32 = 1048576;
-  const num_chunks: u32 = 16384; // 1 megabyte / 512 bits
 
   struct Uniforms {
       numThreads: u32,
       nonceOffset: u32,
+      numChunks: u32,
   };
 
   @group(1) @binding(0) var<storage, read> blockData: array<u32>;
@@ -222,12 +245,13 @@ const sha256Shader = () => `
   @compute @workgroup_size(8)
   fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
       let numThreads: u32 = params.numThreads;
+      let numChunks: u32 = params.numChunks;
       let index = global_id.x;
 
       if (index >= numThreads) {
           return;
       }
-
+      
       let hash_base_index = index * 8u;
 
       hashes[hash_base_index] = 0x6a09e667u;
@@ -250,7 +274,7 @@ const sha256Shader = () => `
           0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u, 0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u
       );
 
-      for (var i = 0u; i < num_chunks; i++){
+      for (var i = 0u; i < numChunks; i++){
           let chunk_index = i * 16u;
           var w = array<u32,64>();
           for (var j = 0u; j < 16u; j++){
@@ -297,6 +321,31 @@ const sha256Shader = () => `
       hashes[hash_base_index + 6] = swap_endianess32(hashes[hash_base_index + 6]);
       hashes[hash_base_index + 7] = swap_endianess32(hashes[hash_base_index + 7]);
     }
+`;
+
+const testShader = `
+  struct Uniforms {
+      numThreads: u32,
+      nonceOffset: u32,
+      numChunks: u32,
+  };
+
+  @group(1) @binding(0) var<storage, read> blockData: array<u32>;
+  @group(0) @binding(0) var<uniform> params: Uniforms;
+  @group(0) @binding(1) var<storage, read_write> hashes: array<u32>;
+
+  @compute @workgroup_size(8)
+  fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let numThreads: u32 = params.numThreads;
+    let numChunks: u32 = params.numChunks;
+    let index = global_id.x;
+
+    if (index >= numThreads) {
+        return;
+    }
+    
+    hashes[index] = numChunks;
+  }
 `;
 
 (async () => {
