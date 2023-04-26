@@ -42,25 +42,26 @@ class Miner {
   async run() {
     const commandEncoder = this.device.createCommandEncoder();
 
-    const rows = 16;
-    const cols = 16;
+    const numThreads = 64;
+    const nonceOffset = 0;
+    const workgroup_X = 64;
 
-    const exampleUniformBuffer = this.createBuffer(this.device, 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    const exampleResultBuffer = this.createBuffer(this.device, this.bufferSize(rows, cols), GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
-    const exampleBindGroup = this.createBindGroup(this.device, this.u_s_BindLayout, [exampleUniformBuffer, exampleResultBuffer]);
-    this.device.queue.writeBuffer(exampleUniformBuffer, 0, new Uint32Array([rows, cols]));
+    const UniformBuffer = this.createBuffer(this.device, 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.device.queue.writeBuffer(UniformBuffer, 0, new Uint32Array([numThreads, nonceOffset]));
+    const ResultBuffer = this.createBuffer(this.device, this.bufferSize(64), GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC); // 64 * 4 bytes from 32 bit int
+    const BindGroup = this.createBindGroup(this.device, this.u_s_BindLayout, [UniformBuffer, ResultBuffer]);
 
-    const examplePassEncoder = commandEncoder.beginComputePass();
-    examplePassEncoder.setPipeline(this.examplePipeline);
-    examplePassEncoder.setBindGroup(0, exampleBindGroup);
-    examplePassEncoder.setBindGroup(1, this.createBindGroup(this.device, this.r_r_BindLayout, [Abuffer, Bbuffer]));
-    examplePassEncoder.dispatchWorkgroups(workgroupCalc(rows, workgroup_Y), workgroupCalc(cols, workgroup_X));
-    examplePassEncoder.end();
+    const PassEncoder = commandEncoder.beginComputePass();
+    PassEncoder.setPipeline(this.sha256Pipeline);
+    PassEncoder.setBindGroup(0, BindGroup);
+    PassEncoder.setBindGroup(1, this.createBindGroup(this.device, this.r_BindLayout, [hexBuffer]));
+    PassEncoder.dispatchWorkgroups(workgroupCalc(numThreads, workgroup_X));
+    PassEncoder.end();
 
     this.device.queue.submit([commandEncoder.finish()]);
 
-    await exampleBuffer.mapAsync(GPUMapMode.READ);
-    const output = exampleBuffer.getMappedRange();
+    await ResultBuffer.mapAsync(GPUMapMode.READ);
+    const output = ResultBuffer.getMappedRange();
 
     return new Float32Array(output);
   }
@@ -71,7 +72,7 @@ class Miner {
   }
 
   initPipelines() {
-    this.sha256Pipeline = this.createPipeline(sha256Shader(this.device.limits.maxComputeWorkgroupSizeX), [this.u_s_BindLayout, this.r_BindLayout]);
+    this.sha256Pipeline = this.createPipeline(sha256Shader(), [this.u_s_BindLayout, this.r_BindLayout]);
   }
 
   createBindGroupLayout(string_entries) {
@@ -135,7 +136,7 @@ function bufferSize(dimA, dimB = 1) {
 }
 
 // Referenced from https://github.com/MarcoCiaramella/sha256-gpu/blob/main/index.js
-const sha256Shader = (maxWorkgroupX) => `
+const sha256Shader = () => `
   fn swap_endianess32(val: u32) -> u32 {
       return ((val>>24u) & 0xffu) | ((val>>8u) & 0xff00u) | ((val<<8u) & 0xff0000u) | ((val<<24u) & 0xff000000u);
   }
@@ -180,11 +181,11 @@ const sha256Shader = (maxWorkgroupX) => `
       nonceOffset: u32;
   }
 
-  @group(0) @binding(0) var<storage, read_write> blockData: array<u32>;
-  @group(0) @binding(1) var<uniform> params: Uniforms;
-  @group(0) @binding(2) var<storage, read_write> hashes: array<u32>;
+  @group(1) @binding(0) var<storage, read> blockData: array<u32>;
+  @group(0) @binding(0) var<uniform> params: Uniforms;
+  @group(0) @binding(1) var<storage, read_write> hashes: array<u32>;
 
-  @compute @workgroup_size(${maxWorkgroupX})
+  @compute @workgroup_size(64)
   fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
       let numThreads: u32 = Uniforms.numThreads;
       let index = global_id.x;
