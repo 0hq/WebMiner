@@ -136,8 +136,6 @@ function bufferSize(dimA, dimB = 1) {
 
 // Referenced from https://github.com/MarcoCiaramella/sha256-gpu/blob/main/index.js
 const sha256Shader = (maxWorkgroupX) => `
-  // SHA-256 for 32-bit aligned messages
-
   fn swap_endianess32(val: u32) -> u32 {
       return ((val>>24u) & 0xffu) | ((val>>8u) & 0xff00u) | ((val<<8u) & 0xff0000u) | ((val<<24u) & 0xff000000u);
   }
@@ -174,31 +172,29 @@ const sha256Shader = (maxWorkgroupX) => `
       return (e & f) ^ ((~e) & g);
   }
 
-  @group(0) @binding(0) var<storage, read_write> messages: array<u32>;
-  @group(0) @binding(1) var<uniform> numThreads: u32;
-  @group(0) @binding(2) var<storage, read> message_sizes: array<u32>;
-  @group(0) @binding(3) var<storage, read_write> hashes: array<u32>;
+  const megabyte: u32 = 1000000;
+  cosnst num_chunks: u32 = 15625; // 1 megabyte / 512 bits
+
+  struct Uniforms {
+      numThreads: u32;
+      nonceOffset: u32;
+  }
+
+  @group(0) @binding(0) var<storage, read_write> blockData: array<u32>;
+  @group(0) @binding(1) var<uniform> params: Uniforms;
+  @group(0) @binding(2) var<storage, read_write> hashes: array<u32>;
 
   @compute @workgroup_size(${maxWorkgroupX})
-  fn sha256(@builtin(global_invocation_id) global_id: vec3<u32>) {
-
+  fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+      let numThreads: u32 = Uniforms.numThreads;
       let index = global_id.x;
+
       if (index >= numThreads) {
           return;
       }
-      let message_base_index = index * message_sizes[1];
-      let hash_base_index = index * (256u / 32u);
 
-      // == padding == //
-
-      messages[message_base_index + message_sizes[0]] = 0x00000080u;
-      for (var i = message_sizes[0] + 1; i < message_sizes[1] - 2; i++){
-          messages[message_base_index + i] = 0x00000000u;
-      }
-      messages[message_base_index + message_sizes[1] - 2] = 0;
-      messages[message_base_index + message_sizes[1] - 1] = swap_endianess32(message_sizes[0] * 32u);
-
-      // == processing == //
+      let message_base_index = index * megabyte;
+      let hash_base_index = index * 8u;
 
       hashes[hash_base_index] = 0x6a09e667u;
       hashes[hash_base_index + 1] = 0xbb67ae85u;
@@ -220,12 +216,11 @@ const sha256Shader = (maxWorkgroupX) => `
           0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u, 0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u
       );
 
-      let num_chunks = (message_sizes[1] * 32u) / 512u;
       for (var i = 0u; i < num_chunks; i++){
-          let chunk_index = i * (512u/32u);
+          let chunk_index = i * 16u;
           var w = array<u32,64>();
           for (var j = 0u; j < 16u; j++){
-              w[j] = swap_endianess32(messages[message_base_index + chunk_index + j]);
+              w[j] = swap_endianess32(blockData[message_base_index + chunk_index + j]);
           }
           for (var j = 16u; j < 64u; j++){
               w[j] = w[j - 16u] + g0(w[j - 15u]) + w[j - 7u] + g1(w[j - 2u]);
