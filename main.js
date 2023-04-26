@@ -19,7 +19,10 @@ class Miner {
     this.initBindGroups();
     this.initPipelines();
 
-    await this.loadBlock("000000006a625f06636b8bb6ac7b960a8d03705d1ace08b1a19da3fdcc99ddbd");
+    const secondBlock = "000000006a625f06636b8bb6ac7b960a8d03705d1ace08b1a19da3fdcc99ddbd";
+    const recentBlock = "0000000000000000000376eae121bc432f7337a6de4adc00c7986466ef4b9a48";
+
+    await this.loadBlock(recentBlock);
 
     this.initialized = true;
   }
@@ -32,24 +35,21 @@ class Miner {
 
     // Pull from https://api.blockchair.com/bitcoin/raw/block/
     const blockJSON = await (await fetch(`https://api.blockchair.com/bitcoin/raw/block/${hash}`)).json();
+    console.log("Block JSON: ", blockJSON);
     const hex = blockJSON.data[hash].raw_block;
-
-    // We need to ensure that the blockData is always 1MB in size
-    // If the blockData is already 1MB, we can use it as is
-    // If it is smaller, we need to pad it with zeros until it is 1MB
-    // If it is larger, we need to truncate it to 1MB
+    console.log("Block hex: ", hex);
 
     const numBytes = hex.length / 2;
     this.blockData = hexToUint32Array(hex);
 
-    if (numBytes < ONE_MB) {
-      // Pad with zeros
-      const paddedBlockData = new Uint8Array(ONE_MB / 4);
-      paddedBlockData.set(new Uint8Array(this.blockData.buffer), 0);
-      this.blockData = paddedBlockData.buffer;
-    } else if (blockDataSize > ONE_MB) {
-      throw new Error("Block data exceeds size");
-    }
+    console.log("Block data size: ", this.blockData.byteLength);
+    console.log("Block data: ", new Uint32Array(this.blockData));
+    console.log("Block size: ", hex.length, hex.length / 2);
+
+    // We need to ensure that the blockData pads to 512 bits (64 bytes)
+    const paddedBlockData = new Uint8Array(Math.ceil(numBytes / 64) * 64);
+    paddedBlockData.set(new Uint8Array(this.blockData.buffer), 0);
+    this.blockData = paddedBlockData.buffer;
 
     this.hexBuffer = this.createBuffer(ONE_MB, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     this.device.queue.writeBuffer(this.hexBuffer, 0, this.blockData);
@@ -64,10 +64,11 @@ class Miner {
 
     const numThreads = 1;
     const nonceOffset = 0;
-    const workgroup_X = 64;
+    const workgroup_X = 8;
+    const outputBufferBytes = numThreads * 32;
 
     const UniformBuffer = this.createBuffer(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    const ResultBuffer = this.createBuffer(numThreads * 32, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC); // 256 bit output or 32 bytes
+    const ResultBuffer = this.createBuffer(outputBufferBytes, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC); // 256 bit output or 32 bytes
     const BindGroup = this.createBindGroup(this.u_s_BindLayout, [UniformBuffer, ResultBuffer]);
     this.device.queue.writeBuffer(UniformBuffer, 0, new Uint32Array([numThreads, nonceOffset]));
 
@@ -80,7 +81,7 @@ class Miner {
 
     this.device.queue.submit([commandEncoder.finish()]);
 
-    const resultOutputBuffer = this.createOutputBuffer(commandEncoder, ResultBuffer, numThreads, 8);
+    const resultOutputBuffer = this.createOutputBuffer(commandEncoder, ResultBuffer, outputBufferBytes);
 
     await resultOutputBuffer.mapAsync(GPUMapMode.READ);
     const output = resultOutputBuffer.getMappedRange();
@@ -145,10 +146,9 @@ class Miner {
     });
   }
 
-  createOutputBuffer(commandEncoder, buffer, rows, cols) {
-    const outputBufferSize = rows * cols * Uint32Array.BYTES_PER_ELEMENT;
-    const outputBuffer = this.createBuffer(outputBufferSize, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ);
-    commandEncoder.copyBufferToBuffer(buffer, 0, outputBuffer, 0, outputBufferSize);
+  createOutputBuffer(commandEncoder, buffer, bytes) {
+    const outputBuffer = this.createBuffer(bytes, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ);
+    commandEncoder.copyBufferToBuffer(buffer, 0, outputBuffer, 0, bytes);
     return outputBuffer;
   }
 }
@@ -208,7 +208,7 @@ const sha256Shader = () => `
   }
 
   const megabyte: u32 = 1048576;
-  const num_chunks: u32 = 15625; // 1 megabyte / 512 bits
+  const num_chunks: u32 = 16384; // 1 megabyte / 512 bits
 
   struct Uniforms {
       numThreads: u32,
@@ -219,7 +219,7 @@ const sha256Shader = () => `
   @group(0) @binding(0) var<uniform> params: Uniforms;
   @group(0) @binding(1) var<storage, read_write> hashes: array<u32>;
 
-  @compute @workgroup_size(64)
+  @compute @workgroup_size(8)
   fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
       let numThreads: u32 = params.numThreads;
       let index = global_id.x;
