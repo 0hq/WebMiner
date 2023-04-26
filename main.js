@@ -1,5 +1,8 @@
 class Miner {
-  constructor() {
+  constructor(blockData, target, prevBlockHash) {
+    this.blockData = blockData;
+    this.target = target;
+    this.prevBlockHash = prevBlockHash;
     this.initialized = false;
     this.device = undefined;
   }
