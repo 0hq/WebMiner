@@ -4,7 +4,7 @@ class Miner {
     this.target = target;
     this.prevBlockHash = prevBlockHash;
     this.initialized = false;
-    this.device = null;
+    this.device = undefined;
   }
 
   async initialize() {
@@ -14,7 +14,7 @@ class Miner {
     const adapter = await navigator.gpu.requestAdapter();
     this.device = await adapter.requestDevice();
 
-    const foo = await this.loadModel(this.folder);
+    await this.loadBlock(this.folder);
 
     this.initialized = true;
   }
@@ -26,51 +26,113 @@ class Miner {
     }
 
     // Example loading a buffer.
-    // console.log("Loading token embeddings...");
-    // const embeddingWeights = await loadBinaryFile("models/" + folder + "/transformer.wte.weight_gpt.bin");
-    // const embeddingWeightsBuffer = createBuffer(this.device, this.bufferSizeCalc(vocab_size, n_embd), GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
-    // this.device.queue.writeBuffer(embeddingWeightsBuffer, 0, embeddingWeights);
+    const exampleValue = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const exampleBuffer = this.createBuffer(this.device, this.bufferSize(exampleValue.length), GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
+    this.device.queue.writeBuffer(exampleBuffer, 0, exampleValue);
 
     console.log("Finished loading miner.");
     return null;
   }
 
-  async run(block) {
+  async run() {
     const commandEncoder = this.device.createCommandEncoder();
 
-    // const matmulUniformBuffer = createBuffer(this.device, 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    // const matmulResultBuffer = createBuffer(this.device, this.bufferSizeCalc(rows, cols), GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
-    // const matMulBindGroup = createBindGroup(this.device, this.u_s_BindLayout, [matmulUniformBuffer, matmulResultBuffer]);
-    // this.device.queue.writeBuffer(matmulUniformBuffer, 0, new Uint32Array([rows, cols, shared]));
+    const rows = 16;
+    const cols = 16;
 
-    // const passEncoder = commandEncoder.beginComputePass();
-    // passEncoder.setPipeline(this.matmulPipeline);
-    // passEncoder.setBindGroup(0, matMulBindGroup);
-    // passEncoder.setBindGroup(1, createBindGroup(this.device, this.r_r_BindLayout, [Abuffer, Bbuffer]));
-    // passEncoder.dispatchWorkgroups(workgroupCalc(rows, workgroup_Y), workgroupCalc(cols, workgroup_X));
-    // passEncoder.end();
+    const exampleUniformBuffer = this.createBuffer(this.device, 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    const exampleResultBuffer = this.createBuffer(this.device, this.bufferSize(rows, cols), GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+    const exampleBindGroup = this.createBindGroup(this.device, this.u_s_BindLayout, [exampleUniformBuffer, exampleResultBuffer]);
+    this.device.queue.writeBuffer(exampleUniformBuffer, 0, new Uint32Array([rows, cols]));
+
+    const examplePassEncoder = commandEncoder.beginComputePass();
+    examplePassEncoder.setPipeline(this.examplePipeline);
+    examplePassEncoder.setBindGroup(0, exampleBindGroup);
+    examplePassEncoder.setBindGroup(1, this.createBindGroup(this.device, this.r_r_BindLayout, [Abuffer, Bbuffer]));
+    examplePassEncoder.dispatchWorkgroups(workgroupCalc(rows, workgroup_Y), workgroupCalc(cols, workgroup_X));
+    examplePassEncoder.end();
 
     this.device.queue.submit([commandEncoder.finish()]);
 
-    await deEmbedOutputBuffer.mapAsync(GPUMapMode.READ);
-    const output = deEmbedOutputBuffer.getMappedRange();
+    await exampleBuffer.mapAsync(GPUMapMode.READ);
+    const output = exampleBuffer.getMappedRange();
 
     return new Float32Array(output);
   }
 
-  bufferSizeCalc(dimA, dimB = 1) {
-    return alignedSize(dimA * dimB * Float32Array.BYTES_PER_ELEMENT, 1);
-  }
-
   initBindGroups() {
-    this.r_BindLayout = createBindGroupLayout(this.device, ["read-only-storage"]);
-    this.u_s_BindLayout = createBindGroupLayout(this.device, ["uniform", "storage"]);
+    this.r_BindLayout = this.createBindGroupLayout(["read-only-storage"]);
+    this.u_s_BindLayout = this.createBindGroupLayout(["uniform", "storage"]);
   }
 
   initPipelines() {
+<<<<<<< HEAD
     this.sha256Pipeline = createPipeline(this.device, miningShader, [this.r_BindLayout]);
   }
   
+=======
+    this.sha256Pipeline = this.createPipeline(matMulShader, [this.u_s_BindLayout, this.r_BindLayout]);
+  }
+
+  createBindGroupLayout(string_entries) {
+    const entries = string_entries.map((entry, i) => ({
+      binding: i,
+      visibility: GPUShaderStage.COMPUTE,
+      buffer: { type: entry },
+    }));
+    return this.device.createBindGroupLayout({
+      entries,
+    });
+  }
+
+  createPipeline(shaderString, bindGroupLayouts) {
+    const shaderModule = this.device.createShaderModule({
+      code: shaderString,
+    });
+    const pipelineLayout = this.device.createPipelineLayout({
+      bindGroupLayouts,
+    });
+    const pipeline = this.device.createComputePipeline({
+      layout: pipelineLayout,
+      compute: {
+        module: shaderModule,
+        entryPoint: "main",
+      },
+    });
+    return pipeline;
+  }
+
+  createBindGroup(bindGroupLayout, buffers) {
+    const entries = buffers.map((buffer, i) => ({
+      binding: i,
+      resource: {
+        buffer,
+      },
+    }));
+    return this.device.createBindGroup({
+      layout: bindGroupLayout,
+      entries,
+    });
+  }
+
+  createBuffer(size, usage) {
+    return this.device.createBuffer({
+      size: size,
+      usage: usage,
+    });
+  }
+
+  createOutputBuffer(commandEncoder, buffer, rows, cols) {
+    const outputBufferSize = bufferSize(rows, cols);
+    const outputBuffer = this.createBuffer(outputBufferSize, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ);
+    commandEncoder.copyBufferToBuffer(buffer, 0, outputBuffer, 0, outputBufferSize);
+    return outputBuffer;
+  }
+}
+
+function bufferSize(dimA, dimB = 1) {
+  return dimA * dimB * Float32Array.BYTES_PER_ELEMENT;
+>>>>>>> origin/master
 }
 
 // Multiplies two matrices.
