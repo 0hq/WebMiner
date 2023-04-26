@@ -203,6 +203,9 @@ const sha256Shader = (maxWorkgroupX) => `
       return (e & f) ^ ((~e) & g);
   }
 
+  const megabyte: u32 = 1000000;
+  cosnst num_chunks: u32 = 15625; // 1 megabyte / 512 bits
+
   struct Uniforms {
       numThreads: u32;
       nonceOffset: u32;
@@ -300,4 +303,4 @@ const sha256Shader = (maxWorkgroupX) => `
       hashes[hash_base_index + 5] = swap_endianess32(hashes[hash_base_index + 5]);
       hashes[hash_base_index + 6] = swap_endianess32(hashes[hash_base_index + 6]);
       hashes[hash_base_index + 7] = swap_endianess32(hashes[hash_base_index + 7]);
-}`;
+
