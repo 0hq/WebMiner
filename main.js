@@ -11,16 +11,21 @@ class Miner {
     const adapter = await navigator.gpu.requestAdapter();
     this.device = await adapter.requestDevice();
 
-    await this.loadBlock(this.folder);
+    this.initBindGroups();
+    this.initPipelines();
 
     this.initialized = true;
   }
 
-  async loadBlock(block) {
+  async loadBlock(hash) {
     if (this.initialized) {
       console.error("Miner already loaded");
       return;
     }
+
+    // Pull from https://api.blockchair.com/bitcoin/raw/block/
+    const blockJSON = await (await fetch(`https://api.blockchair.com/bitcoin/raw/block/${hash}`)).json();
+    const hex = blockJSON.data[hash].raw_block;
 
     // Example loading a buffer.
     const exampleValue = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8]);
