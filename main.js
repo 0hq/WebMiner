@@ -30,6 +30,35 @@ class Miner {
     const blockJSON = await (await fetch(`https://api.blockchair.com/bitcoin/raw/block/${hash}`)).json();
     const hex = blockJSON.data[hash].raw_block;
 
+    const hexToUint32Array = (hex) => {
+      const hexArray = hex.match(/.{1,8}/g);
+      const resultArray = hexArray.map((hex) => parseInt(hex, 16));
+      return new Uint32Array(resultArray);
+    };
+    const blockHex = hex.slice(0, 128);
+    const blockData = hexToUint32Array(blockHex);
+
+      // We need to ensure that the blockData is always 1MB in size
+      // If the blockData is already 1MB, we can use it as is
+      // If it is smaller, we need to pad it with zeros until it is 1MB
+      // If it is larger, we need to truncate it to 1MB
+
+      const ONE_MB = 1024 * 1024;
+      const blockDataSize = this.blockData.byteLength;
+
+      if (blockDataSize < ONE_MB) {
+      // Pad with zeros
+      const paddedBlockData = new Uint8Array(ONE_MB);
+      paddedBlockData.set(new Uint8Array(this.blockData.buffer), 0);
+      this.blockData = paddedBlockData.buffer;
+      } else if (blockDataSize > ONE_MB) {
+      // Truncate to 1MB
+      this.blockData = this.blockData.slice(0, ONE_MB);
+      } else {
+      // Already 1MB, nothing to do
+      }
+
+
     // Example loading a buffer.
     const exampleValue = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8]);
     const exampleBuffer = this.createBuffer(this.device, this.bufferSize(exampleValue.length), GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
@@ -190,12 +219,23 @@ const sha256Shader = () => `
       let numThreads: u32 = Uniforms.numThreads;
       let index = global_id.x;
 
+      let index = global_id.x;
       if (index >= numThreads) {
           return;
       }
+      let message_base_index = index * message_sizes[1];
+      let hash_base_index = index * (256u / 32u);
 
-      let message_base_index = index * megabyte;
-      let hash_base_index = index * 8u;
+      // == padding == //
+
+      messages[message_base_index + message_sizes[0]] = 0x00000080u;
+      for (var i = message_sizes[0] + 1; i < message_sizes[1] - 2; i++){
+          messages[message_base_index + i] = 0x00000000u;
+      }
+      messages[message_base_index + message_sizes[1] - 2] = 0;
+      messages[message_base_index + message_sizes[1] - 1] = swap_endianess32(message_sizes[0] * 32u);
+
+      // == processing == //
 
       hashes[hash_base_index] = 0x6a09e667u;
       hashes[hash_base_index + 1] = 0xbb67ae85u;
@@ -217,11 +257,12 @@ const sha256Shader = () => `
           0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u, 0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u
       );
 
+      let num_chunks = (message_sizes[1] * 32u) / 512u;
       for (var i = 0u; i < num_chunks; i++){
-          let chunk_index = i * 16u;
+          let chunk_index = i * (512u/32u);
           var w = array<u32,64>();
           for (var j = 0u; j < 16u; j++){
-              w[j] = swap_endianess32(blockData[message_base_index + chunk_index + j]);
+              w[j] = swap_endianess32(messages[message_base_index + chunk_index + j]);
           }
           for (var j = 16u; j < 64u; j++){
               w[j] = w[j - 16u] + g0(w[j - 15u]) + w[j - 7u] + g1(w[j - 2u]);
@@ -263,4 +304,4 @@ const sha256Shader = () => `
       hashes[hash_base_index + 5] = swap_endianess32(hashes[hash_base_index + 5]);
       hashes[hash_base_index + 6] = swap_endianess32(hashes[hash_base_index + 6]);
       hashes[hash_base_index + 7] = swap_endianess32(hashes[hash_base_index + 7]);
-}`;
+
