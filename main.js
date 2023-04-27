@@ -25,6 +25,54 @@ class Miner {
     this.initialized = true;
   }
 
+  prepareBlockHeader(blockTemplate) {
+    // Convert block template data into a Uint8Array
+    const blockHeaderBuffer = new ArrayBuffer(80);
+    const blockHeaderView = new DataView(blockHeaderBuffer);
+
+    blockHeaderView.setUint32(0, blockTemplate.version, true);
+    for (let i = 0; i < 8; i++) {
+      blockHeaderView.setUint32(4 + i * 4, parseInt(blockTemplate.previousblockhash.slice((7 - i) * 8, (8 - i) * 8), 16), true);
+    }
+    for (let i = 0; i < 8; i++) {
+      blockHeaderView.setUint32(36 + i * 4, parseInt(blockTemplate.merkleroot.slice((7 - i) * 8, (8 - i) * 8), 16), true);
+    }
+    blockHeaderView.setUint32(68, blockTemplate.time, true);
+
+    // Calculate the target using the .bits value
+    // console.log("Bits: ", blockTemplate.bits);
+    const bits = parseInt("0x" + blockTemplate.bits, 16);
+
+    // 486604799;
+
+    blockHeaderView.setUint32(72, "0x" + blockTemplate.bits, true);
+
+    blockHeaderView.setUint32(76, blockTemplate.nonce, true);
+
+    // Print as hex
+    const blockHeaderHex = Array.from(new Uint8Array(blockHeaderBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    console.log("Block header: ", blockHeaderHex);
+
+    return blockHeaderBuffer;
+  }
+
+  hexToUint32Array(hex) {
+    console.log("hex", hex, typeof hex);
+    const length = hex.length / 2;
+    const buffer = new Uint8Array(length);
+
+    for (let i = 0; i < length; i++) {
+      buffer[i] = parseInt(hex.substr(i * 2, 2), 16);
+    }
+
+    // Convert Uint8Array to Uint32Array using the same ArrayBuffer
+    const uint32Buffer = new Uint32Array(buffer.buffer);
+
+    return uint32Buffer;
+  }
+
   // This is all wrong (I need to sleep more), good reference: https://github.com/guerrerocarlos/bitcoin-miner/blob/master/index.js
   async loadBlock(hash) {
     if (this.initialized) {
@@ -37,28 +85,30 @@ class Miner {
     console.log("Block JSON: ", blockJSON);
     const data = blockJSON.data[hash];
 
-    // Extract the block header fields from the decoded raw block
-    const { versionHex, previousblockhash, merkleroot, time, bits, nonce } = data.decoded_raw_block;
+    // // Extract the block header fields from the decoded raw block
+    // const { versionHex, previousblockhash, merkleroot, time, bits, nonce } = data.decoded_raw_block;
 
-    // Convert the fields to little-endian hexadecimal format
-    const versionHexLE = reverseEndian(versionHex);
-    const previousblockhashLE = reverseEndian(previousblockhash);
-    const merklerootLE = reverseEndian(merkleroot);
-    const timeHexLE = reverseEndian(time.toString(16).padStart(8, "0"));
-    const bitsLE = reverseEndian(bits);
-    const nonceHexLE = reverseEndian(nonce.toString(16).padStart(8, "0"));
+    // // Convert the fields to little-endian hexadecimal format
+    // const versionHexLE = reverseEndian(versionHex);
+    // const previousblockhashLE = reverseEndian(previousblockhash);
+    // const merklerootLE = reverseEndian(merkleroot);
+    // const timeHexLE = reverseEndian(time.toString(16).padStart(8, "0"));
+    // const bitsLE = reverseEndian(bits);
+    // const nonceHexLE = reverseEndian(nonce.toString(16).padStart(8, "0"));
 
-    // Concatenate the fields to form the block header
-    const blockHeaderHex = versionHexLE + previousblockhashLE + merklerootLE + timeHexLE + bitsLE + nonceHexLE;
+    // // Concatenate the fields to form the block header
+    // const blockHeaderHex = versionHexLE + previousblockhashLE + merklerootLE + timeHexLE + bitsLE + nonceHexLE;
 
-    console.log("Block header: ", blockHeaderHex);
+    // console.log("Block header: ", blockHeaderHex);
 
-    // Convert the block header from hexadecimal to a Uint32Array
-    const blockHeaderUint32Array = new Uint32Array(blockHeaderHex.match(/.{1,8}/g).map((hex) => parseInt(hex, 16)));
+    // // Convert the block header from hexadecimal to a Uint32Array
+    // const blockHeaderUint32Array = new Uint32Array(blockHeaderHex.match(/.{1,8}/g).map((hex) => parseInt(hex, 16)));
+
+    const blockHeaderUint32Array = this.prepareBlockHeader(data.decoded_raw_block);
 
     // Pad the block header to 128 bytes
     const blockHeaderUint32ArrayPadded = new Uint32Array(32);
-    blockHeaderUint32ArrayPadded.set(blockHeaderUint32Array, 0);
+    blockHeaderUint32ArrayPadded.set(new Uint32Array(blockHeaderUint32Array), 0);
 
     console.log("Block header Uint32Array: ", blockHeaderUint32Array);
     console.log("Block header Uint32Array size: ", blockHeaderUint32Array.byteLength);
@@ -325,6 +375,14 @@ const sha256Shader = `
 `;
 
 (async () => {
+  const block = {
+    version: 1,
+    previousblockhash: "00000000839a8e6886ab5951d76f411475428afc90947ee320161bbf18eb6048",
+    merkleroot: "9b0fc92260312ce44e74ef369f5c66bbb85848f2eddd5a7a1cde251e54ccfdd5",
+    time: 1231469744,
+    bits: "1d00ffff",
+  };
+  const nonce = 1639830024;
   const miner = new Miner();
   await miner.initialize();
   console.log("Result:", await miner.run());

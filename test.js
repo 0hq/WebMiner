@@ -54,6 +54,10 @@ class CPUMiner {
 
   async getHash(nonce) {
     this.writeUInt32LE(this.timeBitsNonceBuffer, nonce, 8);
+    console.log(
+      "timeBitsNonceBuffer",
+      this.toHexString(new Uint8Array([...this.versionBuffer, ...this.reversedPrevBlockHash, ...this.reversedMrklRoot, ...this.timeBitsNonceBuffer]))
+    );
     return this.reverseBuffer(
       await this.sha256sha256(new Uint8Array([...this.versionBuffer, ...this.reversedPrevBlockHash, ...this.reversedMrklRoot, ...this.timeBitsNonceBuffer]))
     );
@@ -83,17 +87,16 @@ class CPUMiner {
   }
 }
 
-const block = {
-  version: 1,
-  previousblockhash: "00000000839a8e6886ab5951d76f411475428afc90947ee320161bbf18eb6048",
-  merkleroot: "9b0fc92260312ce44e74ef369f5c66bbb85848f2eddd5a7a1cde251e54ccfdd5",
-  time: 1231469744,
-  bits: "1d00ffff",
-};
-const nonce = 1639830024;
-const miner = new CPUMiner(block);
-
 (async () => {
+  const block = {
+    version: 1,
+    previousblockhash: "00000000839a8e6886ab5951d76f411475428afc90947ee320161bbf18eb6048",
+    merkleroot: "9b0fc92260312ce44e74ef369f5c66bbb85848f2eddd5a7a1cde251e54ccfdd5",
+    time: 1231469744,
+    bits: "1d00ffff",
+  };
+  const nonce = 1639830024;
+  const miner = new CPUMiner(block);
   console.log("Mining...");
   console.log("OUPTUT Block hash:", miner.toHexString(await miner.getHash(nonce)));
 })();
