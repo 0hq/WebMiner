@@ -48,7 +48,8 @@ class CPUMiner {
 
   async sha256sha256(buf) {
     const first = await this.sha256(buf);
-    console.log("First SHA:", this.toHexString(this.reverseBuffer(first)));
+    console.log("First SHA (unreversed):", this.toHexString(first));
+    console.log("First SHA (reversed):", this.toHexString(this.reverseBuffer(first)));
     return this.sha256(first);
   }
 
@@ -98,7 +99,8 @@ class CPUMiner {
   const nonce = 1639830024;
   const miner = new CPUMiner(block);
   console.log("Mining...");
-  console.log("OUPTUT Block hash:", miner.toHexString(await miner.getHash(nonce)));
+  console.log("OUPTUT Block hash (reversed):", miner.toHexString(await miner.getHash(nonce)));
+  console.log(`Done with CPU mining!\n\n\n`);
 })();
 
 // 695b16a34003e15ac809f985ad5177f76571f65a328df0c27b34f75018a9bb9c
