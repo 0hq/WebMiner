@@ -85,37 +85,43 @@ class Miner {
     console.log("Block JSON: ", blockJSON);
     const data = blockJSON.data[hash];
 
-    // // Extract the block header fields from the decoded raw block
-    // const { versionHex, previousblockhash, merkleroot, time, bits, nonce } = data.decoded_raw_block;
+    const blockHeaderBuffer = this.prepareBlockHeader(data.decoded_raw_block);
 
-    // // Convert the fields to little-endian hexadecimal format
-    // const versionHexLE = reverseEndian(versionHex);
-    // const previousblockhashLE = reverseEndian(previousblockhash);
-    // const merklerootLE = reverseEndian(merkleroot);
-    // const timeHexLE = reverseEndian(time.toString(16).padStart(8, "0"));
-    // const bitsLE = reverseEndian(bits);
-    // const nonceHexLE = reverseEndian(nonce.toString(16).padStart(8, "0"));
+    // Calculate padding length
+    const originalLength = 80;
+    const totalLength = 128;
 
-    // // Concatenate the fields to form the block header
-    // const blockHeaderHex = versionHexLE + previousblockhashLE + merklerootLE + timeHexLE + bitsLE + nonceHexLE;
+    // Create a new buffer for the padded block header
+    const blockHeaderUint8ArrayPadded = new Uint8Array(totalLength);
+    const blockHeaderUint8Array = new Uint8Array(blockHeaderBuffer);
+    console.log(totalLength, blockHeaderUint8ArrayPadded.byteLength, blockHeaderUint8Array.byteLength);
 
-    // console.log("Block header: ", blockHeaderHex);
+    // Copy the original block header to the padded buffer
+    blockHeaderUint8ArrayPadded.set(blockHeaderUint8Array, 0);
 
-    // // Convert the block header from hexadecimal to a Uint32Array
-    // const blockHeaderUint32Array = new Uint32Array(blockHeaderHex.match(/.{1,8}/g).map((hex) => parseInt(hex, 16)));
+    // Append the '1' bit (0x80 byte)
+    blockHeaderUint8ArrayPadded[originalLength] = 0x80;
 
-    const blockHeaderUint32Array = this.prepareBlockHeader(data.decoded_raw_block);
+    // Append the original message length as a 64-bit big-endian integer
+    const originalLengthBits = BigInt(originalLength * 8);
+    const highBits = Number(originalLengthBits >> 32n);
+    const lowBits = Number(originalLengthBits & 0xffffffffn);
 
-    // Pad the block header to 128 bytes
-    const blockHeaderUint32ArrayPadded = new Uint32Array(32);
-    blockHeaderUint32ArrayPadded.set(new Uint32Array(blockHeaderUint32Array), 0);
+    const lengthBuffer = new ArrayBuffer(8);
+    const lengthView = new DataView(lengthBuffer);
+    lengthView.setUint32(0, highBits, false);
+    lengthView.setUint32(4, lowBits, false);
 
-    console.log("Block header Uint32Array: ", blockHeaderUint32Array);
-    console.log("Block header Uint32Array size: ", blockHeaderUint32Array.byteLength);
+    blockHeaderUint8ArrayPadded.set(new Uint8Array(lengthBuffer), totalLength - 8);
+
+    // Convert the padded block header to a Uint32Array
+    const blockHeaderUint32ArrayPadded = new Uint32Array(blockHeaderUint8ArrayPadded.buffer);
+
+    console.log("Block header Uint32Array: ", new Uint32Array(blockHeaderBuffer), blockHeaderBuffer.byteLength);
     console.log("Block header Uint32Array padded: ", blockHeaderUint32ArrayPadded);
 
     this.hexBuffer = this.createBuffer(128, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
-    this.device.queue.writeBuffer(this.hexBuffer, 0, blockHeaderUint32Array);
+    this.device.queue.writeBuffer(this.hexBuffer, 0, blockHeaderUint32ArrayPadded);
 
     console.log("Finished loading block.");
   }
@@ -375,14 +381,6 @@ const sha256Shader = `
 `;
 
 (async () => {
-  const block = {
-    version: 1,
-    previousblockhash: "00000000839a8e6886ab5951d76f411475428afc90947ee320161bbf18eb6048",
-    merkleroot: "9b0fc92260312ce44e74ef369f5c66bbb85848f2eddd5a7a1cde251e54ccfdd5",
-    time: 1231469744,
-    bits: "1d00ffff",
-  };
-  const nonce = 1639830024;
   const miner = new Miner();
   await miner.initialize();
   console.log("Result:", await miner.run());
